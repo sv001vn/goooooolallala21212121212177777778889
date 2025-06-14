@@ -115,15 +115,7 @@ jobs:
       run: |
         echo "📝 Initial container logs (last 50 lines):"
         echo "==========================================="
-        docker logs --tail 50 ${{ env.CONTAINER_NAME }}
-        
-    - name: 💾 Upload Logs as Artifact
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: gofa-logs-${{ github.run_number }}
-        path: logs/
-        retention-days: 7
+        docker logs ${{ env.CONTAINER_NAME }}
         
     - name: 📊 Container Health Check
       run: |
