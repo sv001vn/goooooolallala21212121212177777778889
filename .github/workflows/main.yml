@@ -51,13 +51,17 @@ jobs:
         # Stop container if running
         if docker ps -q -f name=${{ env.CONTAINER_NAME }}; then
           echo "⏹️ Stopping existing container: ${{ env.CONTAINER_NAME }}"
-          docker stop ${{ env.CONTAINER_NAME }}
+          docker stop ${{ env.CONTAINER_NAME }} || true
+        else
+          echo "ℹ️ No running container named ${{ env.CONTAINER_NAME }} found"
         fi
         
         # Remove container if exists
         if docker ps -aq -f name=${{ env.CONTAINER_NAME }}; then
           echo "🗑️ Removing existing container: ${{ env.CONTAINER_NAME }}"
-          docker rm ${{ env.CONTAINER_NAME }}
+          docker rm ${{ env.CONTAINER_NAME }} || true
+        else
+          echo "ℹ️ No container named ${{ env.CONTAINER_NAME }} found to remove"
         fi
         
     - name: 📁 Create logs directory
