@@ -12,6 +12,11 @@ on:
         - production
         - staging
         - development
+      timeout_hours:
+        description: 'Timeout in hours (default: 6)'
+        required: false
+        default: '6'
+        type: string
   push:
     branches:
       - main
@@ -29,6 +34,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 420  # 7 hours (slightly more than 6 to allow cleanup)
     
     steps:
     - name: 🚀 Checkout Repository
@@ -115,66 +121,99 @@ jobs:
       run: |
         echo "📝 Initial container logs (last 50 lines):"
         echo "==========================================="
-        docker logs ${{ env.CONTAINER_NAME }}
-        
-    - name: 📊 Container Health Check
-      run: |
-        echo "🏥 Performing health check..."
-        sleep 10
-        
-        # Check if container is still running after 10 seconds
-        if docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running; then
-          echo "✅ Health check passed - container is stable"
-          
-          # Show resource usage
-          echo "📈 Resource Usage:"
-          docker stats --no-stream ${{ env.CONTAINER_NAME }}
-        else
-          echo "❌ Health check failed - container is not running"
-          echo "📋 Final logs:"
-          docker logs ${{ env.CONTAINER_NAME }}
-          exit 1
-        fi
-        
-    - name: 🔔 Notify Success
-      if: success()
-      run: |
-        echo "🎉 Crawler deployed successfully!"
-        echo "🆔 Container ID: $(docker ps -q -f name=${{ env.CONTAINER_NAME }})"
-        echo "📊 Deployment Details:"
-        echo "  - Environment: ${{ github.event.inputs.environment || 'production' }}"
-        echo "  - Run ID: ${{ github.run_id }}"
-        echo "  - Commit: ${{ github.sha }}"
-        echo "  - Branch: ${{ github.ref_name }}"
-        
-  monitor:
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event.inputs.environment == 'production'
+        docker logs ${{ env.CONTAINER_NAME }} --tail 50
     
-    steps:
-    - name: 🔍 Monitor Container (5 minutes)
+    - name: ⏳ Wait for Python Script Completion
       run: |
-        echo "👀 Monitoring container for 5 minutes..."
-        for i in {1..5}; do
-          echo "📊 Check $i/5 - $(date)"
+        echo "⏳ Waiting for Python script to complete..."
+        
+        # Set timeout (default 6 hours)
+        TIMEOUT_HOURS=${{ github.event.inputs.timeout_hours || '6' }}
+        TIMEOUT_SECONDS=$((TIMEOUT_HOURS * 3600))
+        START_TIME=$(date +%s)
+        
+        echo "⏰ Timeout set to ${TIMEOUT_HOURS} hours (${TIMEOUT_SECONDS} seconds)"
+        
+        # Monitor container status
+        while true; do
+          CURRENT_TIME=$(date +%s)
+          ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
           
-          if docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running; then
-            echo "✅ Container is running"
-            docker stats --no-stream ${{ env.CONTAINER_NAME }} || true
-          else
-            echo "❌ Container is not running"
-            docker logs --tail 20 ${{ env.CONTAINER_NAME }} || true
-            exit 1
+          # Check if timeout reached
+          if [ $ELAPSED_TIME -ge $TIMEOUT_SECONDS ]; then
+            echo "⏰ Timeout reached after ${TIMEOUT_HOURS} hours"
+            echo "🛑 Forcefully stopping container..."
+            docker stop ${{ env.CONTAINER_NAME }} || true
+            echo "❌ Process terminated due to timeout"
+            break
           fi
           
-          if [ $i -lt 5 ]; then
-            sleep 60
+          # Check container status
+          if ! docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running > /dev/null; then
+            echo "✅ Container has finished execution"
+            
+            # Get container exit code
+            EXIT_CODE=$(docker inspect ${{ env.CONTAINER_NAME }} --format='{{.State.ExitCode}}')
+            echo "📊 Container exit code: $EXIT_CODE"
+            
+            if [ "$EXIT_CODE" = "0" ]; then
+              echo "🎉 Python script completed successfully!"
+            else
+              echo "❌ Python script failed with exit code: $EXIT_CODE"
+            fi
+            break
           fi
+          
+          # Show progress every 5 minutes
+          if [ $((ELAPSED_TIME % 300)) -eq 0 ] && [ $ELAPSED_TIME -gt 0 ]; then
+            ELAPSED_HOURS=$((ELAPSED_TIME / 3600))
+            ELAPSED_MINUTES=$(((ELAPSED_TIME % 3600) / 60))
+            REMAINING_SECONDS=$((TIMEOUT_SECONDS - ELAPSED_TIME))
+            REMAINING_HOURS=$((REMAINING_SECONDS / 3600))
+            REMAINING_MINUTES=$(((REMAINING_SECONDS % 3600) / 60))
+            
+            echo "📊 Progress: ${ELAPSED_HOURS}h ${ELAPSED_MINUTES}m elapsed, ${REMAINING_HOURS}h ${REMAINING_MINUTES}m remaining"
+            echo "🏃 Container is still running..."
+            
+            # Show recent logs
+            echo "📝 Recent logs (last 10 lines):"
+            docker logs ${{ env.CONTAINER_NAME }} --tail 10
+            echo "---"
+          fi
+          
+          # Check every 30 seconds
+          sleep 30
         done
         
-        echo "🎯 Monitoring completed successfully!"
-
+    - name: 📋 Show Final Logs
+      if: always()
+      run: |
+        echo "📝 Final container logs:"
+        echo "========================"
+        docker logs ${{ env.CONTAINER_NAME }}
+        
+    - name: 🧹 Final Cleanup
+      if: always()
+      run: |
+        echo "🧹 Performing final cleanup..."
+        
+        # Stop container if still running
+        if docker ps -q -f name=${{ env.CONTAINER_NAME }}; then
+          echo "⏹️ Stopping container: ${{ env.CONTAINER_NAME }}"
+          docker stop ${{ env.CONTAINER_NAME }} || true
+        fi
+        
+        # Get final container info
+        if docker ps -aq -f name=${{ env.CONTAINER_NAME }}; then
+          echo "📊 Final container status:"
+          docker inspect ${{ env.CONTAINER_NAME }} --format='Container: {{.Name}} | Status: {{.State.Status}} | Exit Code: {{.State.ExitCode}} | Finished At: {{.State.FinishedAt}}'
+          
+          echo "🗑️ Removing container: ${{ env.CONTAINER_NAME }}"
+          docker rm ${{ env.CONTAINER_NAME }} || true
+        fi
+        
+        echo "✅ Cleanup completed"
+    
   cleanup:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'cleanup'
