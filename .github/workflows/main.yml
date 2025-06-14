@@ -1,0 +1,193 @@
+name: Crawler Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+        - development
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  DOCKER_USERNAME: ${{ env.DOCKER_USERNAME }}
+  DOCKER_IMAGE: ${{ env.DOCKER_IMAGE }}
+  CONTAINER_NAME: crawler-github
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: 🔐 Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ env.DOCKER_USERNAME }}
+        password: ${{ env.DOCKER_TOKEN }}
+        
+    - name: ⬇️ Pull Docker Image
+      run: |
+        echo "🔄 Pulling Docker image: ${{ env.DOCKER_IMAGE }}"
+        docker pull ${{ env.DOCKER_IMAGE }}
+        
+    - name: 🧹 Clean up existing containers
+      run: |
+        echo "🧹 Cleaning up existing containers..."
+        # Stop container if running
+        if docker ps -q -f name=${{ env.CONTAINER_NAME }}; then
+          echo "⏹️ Stopping existing container: ${{ env.CONTAINER_NAME }}"
+          docker stop ${{ env.CONTAINER_NAME }}
+        fi
+        
+        # Remove container if exists
+        if docker ps -aq -f name=${{ env.CONTAINER_NAME }}; then
+          echo "🗑️ Removing existing container: ${{ env.CONTAINER_NAME }}"
+          docker rm ${{ env.CONTAINER_NAME }}
+        fi
+        
+    - name: 📁 Create logs directory
+      run: |
+        mkdir -p logs
+        chmod 755 logs
+        
+    - name: 🏃 Run Crawler Container
+      run: |
+        echo "🚀 Starting Crawler container..."
+        docker run -d \
+          --name ${{ env.CONTAINER_NAME }} \
+          --restart unless-stopped \
+          -e PYTHONUNBUFFERED=1 \
+          -e ENVIRONMENT=${{ github.event.inputs.environment || 'production' }} \
+          -e GITHUB_RUN_ID=${{ github.run_id }} \
+          -e GITHUB_RUN_NUMBER=${{ github.run_number }} \
+          -e GITHUB_SHA=${{ github.sha }} \
+          -e GITHUB_REF=${{ github.ref }} \
+          $(echo "${{ secrets.ENV_VARS }}" | base64 -d | sed 's/^/-e /; s/$/\\/' | tr -d '\n') \
+          -v ${{ github.workspace }}/logs:/app/logs \
+          ${{ env.DOCKER_IMAGE }} \
+          python main_gofa_fixed.py
+          
+    - name: ✅ Verify Container Status
+      run: |
+        echo "📊 Container Information:"
+        echo "========================="
+        docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+        
+        # Wait a moment for container to initialize
+        sleep 5
+        
+        # Check if container is still running
+        if docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running; then
+          echo "✅ Container is running successfully!"
+        else
+          echo "❌ Container failed to start or exited"
+          echo "📋 Container logs:"
+          docker logs ${{ env.CONTAINER_NAME }}
+          exit 1
+        fi
+        
+    - name: 📋 Show Initial Logs
+      run: |
+        echo "📝 Initial container logs (last 50 lines):"
+        echo "==========================================="
+        docker logs --tail 50 ${{ env.CONTAINER_NAME }}
+        
+    - name: 💾 Upload Logs as Artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gofa-logs-${{ github.run_number }}
+        path: logs/
+        retention-days: 7
+        
+    - name: 📊 Container Health Check
+      run: |
+        echo "🏥 Performing health check..."
+        sleep 10
+        
+        # Check if container is still running after 10 seconds
+        if docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running; then
+          echo "✅ Health check passed - container is stable"
+          
+          # Show resource usage
+          echo "📈 Resource Usage:"
+          docker stats --no-stream ${{ env.CONTAINER_NAME }}
+        else
+          echo "❌ Health check failed - container is not running"
+          echo "📋 Final logs:"
+          docker logs ${{ env.CONTAINER_NAME }}
+          exit 1
+        fi
+        
+    - name: 🔔 Notify Success
+      if: success()
+      run: |
+        echo "🎉 Crawler deployed successfully!"
+        echo "🆔 Container ID: $(docker ps -q -f name=${{ env.CONTAINER_NAME }})"
+        echo "📊 Deployment Details:"
+        echo "  - Environment: ${{ github.event.inputs.environment || 'production' }}"
+        echo "  - Run ID: ${{ github.run_id }}"
+        echo "  - Commit: ${{ github.sha }}"
+        echo "  - Branch: ${{ github.ref_name }}"
+        
+  monitor:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.inputs.environment == 'production'
+    
+    steps:
+    - name: 🔍 Monitor Container (5 minutes)
+      run: |
+        echo "👀 Monitoring container for 5 minutes..."
+        for i in {1..5}; do
+          echo "📊 Check $i/5 - $(date)"
+          
+          if docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running; then
+            echo "✅ Container is running"
+            docker stats --no-stream ${{ env.CONTAINER_NAME }} || true
+          else
+            echo "❌ Container is not running"
+            docker logs --tail 20 ${{ env.CONTAINER_NAME }} || true
+            exit 1
+          fi
+          
+          if [ $i -lt 5 ]; then
+            sleep 60
+          fi
+        done
+        
+        echo "🎯 Monitoring completed successfully!"
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'cleanup'
+    
+    steps:
+    - name: 🧹 Cleanup Docker Resources
+      run: |
+        echo "🧹 Cleaning up Docker resources..."
+        
+        # Stop and remove container
+        if docker ps -aq -f name=${{ env.CONTAINER_NAME }}; then
+          docker stop ${{ env.CONTAINER_NAME }} || true
+          docker rm ${{ env.CONTAINER_NAME }} || true
+          echo "✅ Container cleaned up"
+        fi
+        
+        # Remove unused images
+        docker image prune -f
+        echo "✅ Unused images removed"
