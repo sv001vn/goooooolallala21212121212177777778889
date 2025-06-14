@@ -22,6 +22,8 @@ env:
   DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
   DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+  DB_HOST: ${{ secrets.DB_HOST }}
+  DB_PORT: ${{ secrets.DB_PORT }}  
   CONTAINER_NAME: crawler-github
 
 jobs:
@@ -80,6 +82,8 @@ jobs:
           -e ENVIRONMENT=${{ github.event.inputs.environment || 'production' }} \
           -e GITHUB_RUN_ID=${{ github.run_id }} \
           -e DB_PASSWORD=${{ env.DB_PASSWORD }} \
+          -e DB_HOST=${{ env.DB_HOST }} \
+          -e DB_PORT=${{ env.DB_PORT }} \
           -e GITHUB_RUN_NUMBER=${{ github.run_number }} \
           -e GITHUB_SHA=${{ github.sha }} \
           -e GITHUB_REF=${{ github.ref }} \
