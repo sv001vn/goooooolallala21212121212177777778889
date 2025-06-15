@@ -1,4 +1,4 @@
-name: Crawler Deployment
+name: Crawler Deployment 2
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ on:
       account_id:
         description: 'Account ID to use'
         required: true
-        default: '1'
+        default: '2'
         type: choice
         options:
         - '1'
@@ -47,7 +47,7 @@ env:
   DB_HOST: ${{ secrets.DB_HOST }}
   DB_PORT: ${{ secrets.DB_PORT }}  
   CONTAINER_NAME: crawler-github
-  GOFA_ACCOUNT_ID: 1
+  ACCOUNT_ID: 2
 
 jobs:
   deploy:
@@ -117,7 +117,7 @@ jobs:
           -e DB_PORT=${{ env.DB_PORT }} \
           -e GITHUB_RUN_NUMBER=${{ github.run_number }} \
           -e GITHUB_SHA=${{ github.sha }} \
-          -e GOFA_ACCOUNT_ID="${{ env.ACCOUNT_ID }}" \
+          -e ACCOUNT_ID="${{ env.ACCOUNT_ID }}" \
           -e GITHUB_REF=${{ github.ref }} \
           $(echo "${{ secrets.ENV_VARS }}" | base64 -d | sed 's/^/-e /; s/$/\\/' | tr -d '\n') \
           -v ${{ github.workspace }}/logs:/app/logs \
