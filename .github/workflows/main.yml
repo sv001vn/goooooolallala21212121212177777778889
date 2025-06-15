@@ -17,6 +17,10 @@ on:
         required: false
         default: '6'
         type: string
+      part:  # Fixed indentation - was missing one space
+        description: 'Part number (01, 02, etc.)'
+        required: false
+        default: '01'   
   push:
     branches:
       - main
@@ -233,3 +237,50 @@ jobs:
         # Remove unused images
         docker image prune -f
         echo "✅ Unused images removed"
+
+  trigger_next_chunk:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.deploy.result == 'success' }}
+    steps:
+      - name: Trigger next chunk or complete
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const currentPart = "${{ github.event.inputs.part || '01' }}";
+            let nextPartNumber;
+
+            console.log(`Current part: ${currentPart}`);
+
+            if (currentPart === "all") {
+              console.log("Initial 'all' detected, starting with part 001.");
+              nextPartNumber = 1;
+            } else {
+              nextPartNumber = parseInt(currentPart) + 1;
+            }
+
+            console.log(`Next part number: ${nextPartNumber}`);
+
+            if (nextPartNumber <= 63000000) { 
+              const nextPartStr = String(nextPartNumber).padStart(3, '0');
+              console.log(`Triggering next chunk: ${nextPartStr}`);
+              
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'main.yml',
+                  ref: 'main',
+                  inputs: { 
+                    part: nextPartStr 
+                  }
+                });
+                console.log(`Successfully triggered workflow for part ${nextPartStr}`);
+              } catch (error) {
+                console.error(`Failed to trigger workflow: ${error.message}`);
+                throw error;
+              }
+            } else {
+              console.log("All chunks processed. Workflow sequence completed.");
+            }
