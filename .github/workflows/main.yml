@@ -13,13 +13,18 @@ on:
         - staging
         - development
       account_id:
-        description: 'GOFA Account ID to use'
+        description: 'Account ID to use'
         required: true
         default: '1'
         type: choice
         options:
         - '1'
-        - '2'  
+        - '2'
+        - '3'
+        - '4'
+        - '5'
+        - '6'
+        - '7'  
       timeout_hours:
         description: 'Timeout in hours (default: 6)'
         required: false
