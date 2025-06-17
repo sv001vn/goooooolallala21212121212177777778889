@@ -106,7 +106,7 @@ jobs:
     - name: 🏃 Run Crawler Container
       run: |
         echo "🚀 Starting Crawler container..."
-        docker run -d \
+        docker run \
           --name ${{ env.CONTAINER_NAME }} \
           --restart unless-stopped \
           -e PYTHONUNBUFFERED=1 \
@@ -149,9 +149,9 @@ jobs:
         echo "==========================================="
         docker logs ${{ env.CONTAINER_NAME }} --tail 50
     
-    - name: ⏳ Wait for Python Script Completion
+    - name: ⏳ Wait for Python Script Completion and Stream Logs
       run: |
-        echo "⏳ Waiting for Python script to complete..."
+        echo "⏳ Waiting for Python script to complete and streaming logs..."
         
         # Set timeout (default 6 hours)
         TIMEOUT_HOURS=${{ github.event.inputs.timeout_hours || '6' }}
@@ -159,6 +159,12 @@ jobs:
         START_TIME=$(date +%s)
         
         echo "⏰ Timeout set to ${TIMEOUT_HOURS} hours (${TIMEOUT_SECONDS} seconds)"
+        echo "📝 Streaming container logs in real-time:"
+        echo "=========================================="
+        
+        # Start following logs in background
+        docker logs -f ${{ env.CONTAINER_NAME }} &
+        LOGS_PID=$!
         
         # Monitor container status
         while true; do
@@ -167,8 +173,10 @@ jobs:
           
           # Check if timeout reached
           if [ $ELAPSED_TIME -ge $TIMEOUT_SECONDS ]; then
+            echo ""
             echo "⏰ Timeout reached after ${TIMEOUT_HOURS} hours"
             echo "🛑 Forcefully stopping container..."
+            kill $LOGS_PID 2>/dev/null || true
             docker stop ${{ env.CONTAINER_NAME }} || true
             echo "❌ Process terminated due to timeout"
             break
@@ -176,7 +184,11 @@ jobs:
           
           # Check container status
           if ! docker ps -q -f name=${{ env.CONTAINER_NAME }} -f status=running > /dev/null; then
+            echo ""
             echo "✅ Container has finished execution"
+            
+            # Stop log streaming
+            kill $LOGS_PID 2>/dev/null || true
             
             # Get container exit code
             EXIT_CODE=$(docker inspect ${{ env.CONTAINER_NAME }} --format='{{.State.ExitCode}}')
@@ -188,23 +200,6 @@ jobs:
               echo "❌ Python script failed with exit code: $EXIT_CODE"
             fi
             break
-          fi
-          
-          # Show progress every 5 minutes
-          if [ $((ELAPSED_TIME % 300)) -eq 0 ] && [ $ELAPSED_TIME -gt 0 ]; then
-            ELAPSED_HOURS=$((ELAPSED_TIME / 3600))
-            ELAPSED_MINUTES=$(((ELAPSED_TIME % 3600) / 60))
-            REMAINING_SECONDS=$((TIMEOUT_SECONDS - ELAPSED_TIME))
-            REMAINING_HOURS=$((REMAINING_SECONDS / 3600))
-            REMAINING_MINUTES=$(((REMAINING_SECONDS % 3600) / 60))
-            
-            echo "📊 Progress: ${ELAPSED_HOURS}h ${ELAPSED_MINUTES}m elapsed, ${REMAINING_HOURS}h ${REMAINING_MINUTES}m remaining"
-            echo "🏃 Container is still running..."
-            
-            # Show recent logs
-            echo "📝 Recent logs (last 10 lines):"
-            docker logs ${{ env.CONTAINER_NAME }} --tail 10
-            echo "---"
           fi
           
           # Check every 30 seconds
