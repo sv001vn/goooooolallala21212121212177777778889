@@ -108,7 +108,6 @@ jobs:
         echo "🚀 Starting Crawler container..."
         docker run \
           --name ${{ env.CONTAINER_NAME }} \
-          --restart unless-stopped \
           -e PYTHONUNBUFFERED=1 \
           -e ENVIRONMENT=${{ github.event.inputs.environment || 'production' }} \
           -e GITHUB_RUN_ID=${{ github.run_id }} \
