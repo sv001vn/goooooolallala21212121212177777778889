@@ -52,7 +52,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 420  # 7 hours (slightly more than 6 to allow cleanup)
+    timeout-minutes: 300
     
     steps:
     - name: 🚀 Checkout Repository
